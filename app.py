@@ -12,7 +12,7 @@ CORS(app)  # Activer CORS pour toutes les routes
 model = joblib.load('new_bike_availability_predictor.pkl')
 
 # Charger les données depuis le fichier JSON
-with open('response_001.json') as f:
+with open('response_002.json') as f:
     data = json.load(f)
 
 # Extraire les données pertinentes
