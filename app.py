@@ -6,61 +6,83 @@ import joblib
 import json
 
 app = Flask(__name__)
-CORS(app)  # Activer CORS pour toutes les routes
+CORS(app)  # Enable CORS for all routes
 
-# Charger le modèle sauvegardé
+# Load the saved model
 model = joblib.load('new_bike_availability_predictor.pkl')
 
-# Charger les données depuis le fichier JSON
-with open('response_002.json') as f:
-    data = json.load(f)
+# Load data from JSON files
+def load_data(files):
+    dfs = []
+    for file in files:
+        with open(file) as f:
+            data = json.load(f)
+            timestamps = data['index']
+            available_bikes = data['values']
+            entity_id = data['entityId']
+            df = pd.DataFrame({
+                'timestamp': timestamps,
+                'available_bikes': available_bikes,
+                'entity_id': entity_id
+            })
+            dfs.append(df)
+    return pd.concat(dfs, ignore_index=True)
 
-# Extraire les données pertinentes
-timestamps = data['index']
-available_bikes = data['values']
+# List of JSON files
+json_files = ['response_001.json', 'response_002.json', 'response_003.json']
+df = load_data(json_files)
 
-# Créer un DataFrame
-df = pd.DataFrame({
-    'timestamp': timestamps,
-    'available_bikes': available_bikes
-})
-
-# Convertir les timestamps en datetime
+# Convert timestamps to datetime
 df['timestamp'] = pd.to_datetime(df['timestamp'])
 
-# Ajouter des colonnes pour l'heure et le jour de la semaine
+# Add columns for hour and day of the week
 df['hour'] = df['timestamp'].dt.hour
 df['day_of_week'] = df['timestamp'].dt.dayofweek
 
-# Mapper les jours de la semaine en noms
+# Map days of the week to names
 days_mapping = {0: 'Lundi', 1: 'Mardi', 2: 'Mercredi', 3: 'Jeudi', 4: 'Vendredi', 5: 'Samedi', 6: 'Dimanche'}
 df['day_of_week'] = df['day_of_week'].map(days_mapping)
 
 @app.route('/predict', methods=['GET'])
 def predict():
     try:
+        entity_id = request.args.get('entityId')
         hour = int(request.args.get('hour'))
         day_of_week = request.args.get('day_of_week')
         day_of_week_num = {v: k for k, v in days_mapping.items()}[day_of_week]
 
-        # Préparer les données pour la prédiction
+        if entity_id is None:
+            return jsonify({'error': 'entityId is required'}), 400
+
+        # Filter data for the specified station
+        station_data = df[df['entity_id'] == entity_id]
+
+        if station_data.empty:
+            return jsonify({'error': f'No data found for entity_id: {entity_id}'}), 400
+
+        # Prepare data for prediction
         prediction_data = pd.DataFrame({
             'hour': [hour],
-            'day_of_week': [day_of_week_num]
+            'day_of_week': [day_of_week_num],
+            'entity_id': [station_data['entity_id'].astype('category').cat.codes.iloc[0]]
         })
 
-        # Faire des prédictions
+        # Make predictions
         predictions = model.predict(prediction_data)
 
-        # Préparer les données pour la journée entière
-        day_data = df[df['day_of_week'] == day_of_week].groupby('hour').agg({
+        # Prepare data for the entire day
+        day_data = station_data[station_data['day_of_week'] == day_of_week].groupby('hour').agg({
             'available_bikes': 'mean'
         }).reset_index()
 
-        # Convertir les données pour la réponse JSON
+        if day_data.empty:
+            return jsonify({'error': f'No daily data found for entity_id: {entity_id}, day_of_week: {day_of_week}'}), 400
+
+        # Convert day data to JSON format
         day_data_json = day_data.to_dict(orient='records')
 
         return jsonify({
+            'entityId': entity_id,
             'hour': hour,
             'day_of_week': day_of_week,
             'predicted_available_bikes': predictions[0],
@@ -72,4 +94,3 @@ def predict():
 
 if __name__ == '__main__':
     app.run(debug=True)
-    

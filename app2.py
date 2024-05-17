@@ -5,19 +5,26 @@ import joblib
 import json
 import altair as alt
 
-# Charger les données depuis le fichier JSON
-with open('response_002.json') as f:
-    data = json.load(f)
+# Fonction pour charger les données depuis les fichiers JSON
+def load_data(files):
+    dfs = []
+    for file in files:
+        with open(file) as f:
+            data = json.load(f)
+            timestamps = data['index']
+            available_bikes = data['values']
+            entity_id = data['entityId']
+            df = pd.DataFrame({
+                'timestamp': timestamps,
+                'available_bikes': available_bikes,
+                'entity_id': entity_id
+            })
+            dfs.append(df)
+    return pd.concat(dfs, ignore_index=True)
 
-# Extraire les données pertinentes
-timestamps = data['index']
-available_bikes = data['values']
-
-# Créer un DataFrame
-df = pd.DataFrame({
-    'timestamp': timestamps,
-    'available_bikes': available_bikes
-})
+# Liste des fichiers JSON
+json_files = ['response_001.json', 'response_002.json', 'response_003.json']
+df = load_data(json_files)
 
 # Convertir les timestamps en datetime
 df['timestamp'] = pd.to_datetime(df['timestamp'])
@@ -34,9 +41,10 @@ df['day_of_week'] = df['day_of_week'].map(days_mapping)
 model = joblib.load('new_bike_availability_predictor.pkl')
 
 # Interface Streamlit
-st.title('Prédiction de Disponibilité des Vélos à la Station 002 à Montpellier')
+st.title('Prédiction de Disponibilité des Vélos à Montpellier')
 
-# Sélectionner une heure et un jour de la semaine
+# Sélectionner une station, une heure et un jour de la semaine
+station_id = st.selectbox('Sélectionnez la station', df['entity_id'].unique())
 hour = st.slider('Heure', 0, 23, 12)
 day_of_week = st.selectbox('Jour de la semaine', ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'])
 
@@ -47,18 +55,19 @@ day_of_week_num = days_mapping[day_of_week]
 # Préparer les données pour la prédiction
 prediction_data = pd.DataFrame({
     'hour': [hour],
-    'day_of_week': [day_of_week_num]
+    'day_of_week': [day_of_week_num],
+    'entity_id': [df[df['entity_id'] == station_id]['entity_id'].astype('category').cat.codes.iloc[0]]
 })
 
 # Faire des prédictions
 predictions = model.predict(prediction_data)
 
 # Afficher les résultats
-st.subheader(f"Prédiction pour l'heure {hour} et le jour {day_of_week}")
+st.subheader(f"Prédiction pour l'heure {hour} et le jour {day_of_week} pour la station {station_id}")
 st.write(f"Vélos disponibles prédits : {predictions[0]:.2f}")
 
 # Préparer les données pour la journée entière
-day_data = df[df['day_of_week'] == day_of_week].groupby('hour').agg({
+day_data = df[(df['entity_id'] == station_id) & (df['day_of_week'] == day_of_week)].groupby('hour').agg({
     'available_bikes': 'mean'
 }).reset_index()
 
